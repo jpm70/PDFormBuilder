@@ -2,114 +2,206 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>PDF Click & Draw Creator</title>
-    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <title>PDF Maker Pro - Dibujar Campos</title>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <style>
-        :root { --bg: #1a1a1a; --card: #2d2d2d; --text: #eee; --accent: #3498db; }
+        :root { --bg: #121212; --card: #1e1e1e; --accent: #27ae60; --text: #e0e0e0; --error: #e74c3c; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .toolbar { background: var(--card); padding: 15px; border-radius: 10px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; sticky: top; z-index: 100; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        #pdf-canvas { border: 2px dashed #555; cursor: crosshair; background: white; max-width: 100%; }
-        .marker { position: absolute; background: rgba(52, 152, 219, 0.4); border: 1px solid #3498db; pointer-events: none; color: white; font-size: 10px; padding: 2px; }
-        button { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; background: var(--accent); color: white; }
-        .btn-download { background: #27ae60; }
-        input[type="file"] { background: #3d3d3d; padding: 5px; border-radius: 5px; }
+        
+        .toolbar { 
+            background: var(--card); padding: 15px 25px; border-radius: 12px; 
+            display: flex; gap: 15px; align-items: center; margin-bottom: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333;
+            position: sticky; top: 20px; z-index: 1000;
+        }
+
+        #canvas-container { position: relative; border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.3); }
+        #pdf-canvas { background: white; cursor: crosshair; display: block; }
+        
+        /* El recuadro que se ve mientras arrastras */
+        #selection-rect {
+            position: absolute; border: 2px dashed var(--accent);
+            background: rgba(39, 174, 96, 0.2); display: none; pointer-events: none;
+        }
+
+        .marker { 
+            position: absolute; background: rgba(39, 174, 96, 0.4); 
+            border: 2px solid var(--accent); pointer-events: none; 
+            color: white; font-weight: bold; font-size: 11px; display: flex; align-items: center; justify-content: center; overflow: hidden;
+        }
+
+        button, input[type="file"], select { 
+            padding: 10px 16px; border-radius: 8px; border: 1px solid #444; 
+            background: #2c2c2c; color: white; font-weight: 600; cursor: pointer;
+        }
+
+        button:hover { background: #3d3d3d; }
+        .btn-save { background: var(--accent); border: none; }
+        .btn-save:hover { background: #2ecc71; }
+        .btn-undo { background: var(--error); border: none; }
+        .btn-undo:hover { background: #c0392b; }
+
+        .hint { margin-top: 10px; font-size: 0.9em; color: #888; }
     </style>
 </head>
 <body>
 
     <div class="toolbar">
-        <input type="file" id="file-upload" accept="application/pdf">
-        <select id="tipo-campo">
-            <option value="text">Texto Rellenable</option>
+        <input type="file" id="upload" accept="application/pdf">
+        <select id="fieldType">
+            <option value="text">Campo de Texto</option>
             <option value="check">Casilla (Checkbox)</option>
         </select>
-        <button onclick="descargarPDF()" class="btn-download">💾 Guardar y Descargar</button>
+        <button class="btn-undo" onclick="undoLast()">↩ Deshacer</button>
+        <button class="btn-save" onclick="generatePDF()">💾 Guardar PDF</button>
     </div>
 
-    <div style="position: relative;" id="canvas-container">
+    <div id="canvas-container">
         <canvas id="pdf-canvas"></canvas>
+        <div id="selection-rect"></div>
     </div>
+
+    <div class="hint">Haz clic y arrastra sobre el PDF para dibujar el tamaño del campo.</div>
 
 <script>
-    const pdfjsLib = window['pdfjs-dist/build/pdf'];
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    const pdfjs = window['pdfjs-dist/build/pdf'];
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-    let pdfDoc = null;
-    let originalBytes = null;
-    let camposParaAñadir = []; // Lista de coordenadas donde hiciste clic
+    let originalUint8Array = null;
+    let fieldPoints = [];
+    let isDragging = false;
+    let startX, startY;
 
-    // 1. Cargar y visualizar el PDF
-    document.getElementById('file-upload').addEventListener('change', async (e) => {
+    const canvas = document.getElementById('pdf-canvas');
+    const container = document.getElementById('canvas-container');
+    const selRect = document.getElementById('selection-rect');
+
+    // 1. Cargar PDF
+    document.getElementById('upload').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        originalBytes = await file.arrayBuffer();
-        
-        const loadingTask = pdfjsLib.getDocument({data: originalBytes});
-        const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1); // Trabajamos en la pág 1
-        
-        const canvas = document.getElementById('pdf-canvas');
-        const context = canvas.getContext('2d');
+        const arrayBuffer = await file.arrayBuffer();
+        originalUint8Array = new Uint8Array(arrayBuffer);
+        const pdf = await pdfjs.getDocument({data: originalUint8Array}).promise;
+        const page = await pdf.getPage(1);
         const viewport = page.getViewport({scale: 1.5});
-        
         canvas.height = viewport.height;
         canvas.width = viewport.width;
+        await page.render({canvasContext: canvas.getContext('2d'), viewport: viewport}).promise;
+        fieldPoints = [];
+        renderMarkers();
+    });
+
+    // 2. Lógica de Dibujo (Mouse Down, Move, Up)
+    canvas.addEventListener('mousedown', (e) => {
+        if (!originalUint8Array) return;
+        isDragging = true;
+        const rect = canvas.getBoundingClientRect();
+        startX = e.clientX - rect.left;
+        startY = e.clientY - rect.top;
         
-        await page.render({canvasContext: context, viewport: viewport}).promise;
+        selRect.style.left = startX + 'px';
+        selRect.style.top = startY + 'px';
+        selRect.style.width = '0px';
+        selRect.style.height = '0px';
+        selRect.style.display = 'block';
     });
 
-    // 2. "Dibujar" capturando el clic
-    document.getElementById('pdf-canvas').addEventListener('click', (e) => {
-        const rect = e.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const tipo = document.getElementById('tipo-campo').value;
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const rect = canvas.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(e.clientX - rect.left, canvas.width));
+        const currentY = Math.max(0, Math.min(e.clientY - rect.top, canvas.height));
+        
+        const width = currentX - startX;
+        const height = currentY - startY;
 
-        // Guardar coordenadas para pdf-lib (ajustando escala)
-        camposParaAñadir.push({ x, y, tipo, canvasHeight: e.target.height, canvasWidth: e.target.width });
-
-        // Crear marca visual
-        const marker = document.createElement('div');
-        marker.className = 'marker';
-        marker.style.left = x + 'px';
-        marker.style.top = y + 'px';
-        marker.style.width = tipo === 'text' ? '100px' : '20px';
-        marker.style.height = '20px';
-        marker.innerText = tipo === 'text' ? 'Texto' : 'V';
-        document.getElementById('canvas-container').appendChild(marker);
+        selRect.style.width = Math.abs(width) + 'px';
+        selRect.style.height = Math.abs(height) + 'px';
+        selRect.style.left = (width > 0 ? startX : currentX) + 'px';
+        selRect.style.top = (height > 0 ? startY : currentY) + 'px';
     });
 
-    // 3. Generar PDF real con los campos en esas coordenadas
-    async function descargarPDF() {
-        if (!originalBytes) return alert("Sube un PDF primero");
+    window.addEventListener('mouseup', (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        selRect.style.display = 'none';
 
-        const { PDFDocument, rgb } = PDFLib;
-        const pdfLibDoc = await PDFDocument.load(originalBytes);
-        const form = pdfLibDoc.getForm();
-        const page = pdfLibDoc.getPages()[0];
-        const { width, height } = page.getSize();
+        const rect = canvas.getBoundingClientRect();
+        const endX = Math.max(0, Math.min(e.clientX - rect.left, canvas.width));
+        const endY = Math.max(0, Math.min(e.clientY - rect.top, canvas.height));
 
-        camposParaAñadir.forEach((c, index) => {
-            // Conversión de coordenadas de Canvas a PDF (PDF usa el origen abajo-izquierda)
-            const pdfX = (c.x * width) / c.canvasWidth;
-            const pdfY = height - ((c.y * height) / c.canvasHeight);
+        const width = Math.abs(endX - startX);
+        const height = Math.abs(endY - startY);
 
-            if (c.tipo === 'text') {
-                const tf = form.createTextField(`campo_${index}`);
-                tf.addToPage(page, { x: pdfX, y: pdfY - 20, width: 150, height: 20 });
-            } else {
-                const cb = form.createCheckBox(`check_${index}`);
-                cb.addToPage(page, { x: pdfX, y: pdfY - 20, width: 20, height: 20 });
-            }
+        // Solo crear si el área es significativa
+        if (width > 5 && height > 5) {
+            fieldPoints.push({
+                x: Math.min(startX, endX),
+                y: Math.min(startY, endY),
+                w: width,
+                h: height,
+                type: document.getElementById('fieldType').value,
+                cW: canvas.width,
+                cH: canvas.height
+            });
+            renderMarkers();
+        }
+    });
+
+    // 3. Renderizar marcas visuales y Deshacer
+    function renderMarkers() {
+        document.querySelectorAll('.marker').forEach(m => m.remove());
+        fieldPoints.forEach((p, i) => {
+            const div = document.createElement('div');
+            div.className = 'marker';
+            div.style.left = p.x + 'px';
+            div.style.top = p.y + 'px';
+            div.style.width = p.w + 'px';
+            div.style.height = p.h + 'px';
+            div.innerText = p.type === 'text' ? 'TEXTO' : '✔';
+            container.appendChild(div);
         });
+    }
 
-        const pdfBytes = await pdfLibDoc.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = "editado_rellenable.pdf";
-        link.click();
+    function undoLast() {
+        fieldPoints.pop();
+        renderMarkers();
+    }
+
+    // 4. Generar PDF Final
+    async function generatePDF() {
+        if (!originalUint8Array || fieldPoints.length === 0) return alert("Sube un PDF y dibuja algún campo.");
+        try {
+            const { PDFDocument } = PDFLib;
+            const pdfDoc = await PDFDocument.load(originalUint8Array);
+            const form = pdfDoc.getForm();
+            const page = pdfDoc.getPages()[0];
+            const { width, height } = page.getSize();
+
+            fieldPoints.forEach((p, i) => {
+                const pdfX = (p.x * width) / p.cW;
+                const pdfY = height - ((p.y * height) / p.cH) - ((p.h * height) / p.cH);
+                const pdfW = (p.w * width) / p.cW;
+                const pdfH = (p.h * height) / p.cH;
+
+                if (p.type === 'text') {
+                    const tf = form.createTextField(`txt_${Date.now()}_${i}`);
+                    tf.addToPage(page, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+                } else {
+                    const cb = form.createCheckBox(`chk_${Date.now()}_${i}`);
+                    cb.addToPage(page, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+                }
+            });
+
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: "application/pdf" });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = "formulario_final.pdf";
+            link.click();
+        } catch (err) { alert("Error: " + err.message); }
     }
 </script>
 </body>
