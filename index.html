@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Click & Draw Creator</title>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <style>
+        :root { --bg: #1a1a1a; --card: #2d2d2d; --text: #eee; --accent: #3498db; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .toolbar { background: var(--card); padding: 15px; border-radius: 10px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; sticky: top; z-index: 100; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        #pdf-canvas { border: 2px dashed #555; cursor: crosshair; background: white; max-width: 100%; }
+        .marker { position: absolute; background: rgba(52, 152, 219, 0.4); border: 1px solid #3498db; pointer-events: none; color: white; font-size: 10px; padding: 2px; }
+        button { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; background: var(--accent); color: white; }
+        .btn-download { background: #27ae60; }
+        input[type="file"] { background: #3d3d3d; padding: 5px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <div class="toolbar">
+        <input type="file" id="file-upload" accept="application/pdf">
+        <select id="tipo-campo">
+            <option value="text">Texto Rellenable</option>
+            <option value="check">Casilla (Checkbox)</option>
+        </select>
+        <button onclick="descargarPDF()" class="btn-download">💾 Guardar y Descargar</button>
+    </div>
+
+    <div style="position: relative;" id="canvas-container">
+        <canvas id="pdf-canvas"></canvas>
+    </div>
+
+<script>
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let originalBytes = null;
+    let camposParaAñadir = []; // Lista de coordenadas donde hiciste clic
+
+    // 1. Cargar y visualizar el PDF
+    document.getElementById('file-upload').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        originalBytes = await file.arrayBuffer();
+        
+        const loadingTask = pdfjsLib.getDocument({data: originalBytes});
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1); // Trabajamos en la pág 1
+        
+        const canvas = document.getElementById('pdf-canvas');
+        const context = canvas.getContext('2d');
+        const viewport = page.getViewport({scale: 1.5});
+        
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        await page.render({canvasContext: context, viewport: viewport}).promise;
+    });
+
+    // 2. "Dibujar" capturando el clic
+    document.getElementById('pdf-canvas').addEventListener('click', (e) => {
+        const rect = e.target.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const tipo = document.getElementById('tipo-campo').value;
+
+        // Guardar coordenadas para pdf-lib (ajustando escala)
+        camposParaAñadir.push({ x, y, tipo, canvasHeight: e.target.height, canvasWidth: e.target.width });
+
+        // Crear marca visual
+        const marker = document.createElement('div');
+        marker.className = 'marker';
+        marker.style.left = x + 'px';
+        marker.style.top = y + 'px';
+        marker.style.width = tipo === 'text' ? '100px' : '20px';
+        marker.style.height = '20px';
+        marker.innerText = tipo === 'text' ? 'Texto' : 'V';
+        document.getElementById('canvas-container').appendChild(marker);
+    });
+
+    // 3. Generar PDF real con los campos en esas coordenadas
+    async function descargarPDF() {
+        if (!originalBytes) return alert("Sube un PDF primero");
+
+        const { PDFDocument, rgb } = PDFLib;
+        const pdfLibDoc = await PDFDocument.load(originalBytes);
+        const form = pdfLibDoc.getForm();
+        const page = pdfLibDoc.getPages()[0];
+        const { width, height } = page.getSize();
+
+        camposParaAñadir.forEach((c, index) => {
+            // Conversión de coordenadas de Canvas a PDF (PDF usa el origen abajo-izquierda)
+            const pdfX = (c.x * width) / c.canvasWidth;
+            const pdfY = height - ((c.y * height) / c.canvasHeight);
+
+            if (c.tipo === 'text') {
+                const tf = form.createTextField(`campo_${index}`);
+                tf.addToPage(page, { x: pdfX, y: pdfY - 20, width: 150, height: 20 });
+            } else {
+                const cb = form.createCheckBox(`check_${index}`);
+                cb.addToPage(page, { x: pdfX, y: pdfY - 20, width: 20, height: 20 });
+            }
+        });
+
+        const pdfBytes = await pdfLibDoc.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = "editado_rellenable.pdf";
+        link.click();
+    }
+</script>
+</body>
+</html>
