@@ -2,49 +2,24 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>PDF Maker Pro - Versión Estable</title>
+    <title>PDF Maker Pro - Firefox Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <style>
         :root { --bg: #121212; --card: #1e1e1e; --accent: #27ae60; --text: #e0e0e0; --error: #e74c3c; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; }
-        
-        .toolbar { 
-            background: var(--card); padding: 10px 20px; border-radius: 12px; 
-            display: flex; gap: 8px; align-items: center; margin-bottom: 15px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333;
-            position: sticky; top: 10px; z-index: 1000; flex-wrap: wrap;
-        }
-
+        .toolbar { background: var(--card); padding: 10px 20px; border-radius: 12px; display: flex; gap: 8px; align-items: center; margin-bottom: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333; position: sticky; top: 10px; z-index: 1000; }
         #canvas-container { position: relative; border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.3); line-height: 0; background: #555; }
         #pdf-canvas { background: white; cursor: crosshair; }
-        
-        #selection-rect {
-            position: absolute; border: 2px dashed var(--accent);
-            background: rgba(39, 174, 96, 0.2); display: none; pointer-events: none;
-        }
-
-        .marker { 
-            position: absolute; background: rgba(39, 174, 96, 0.5); 
-            border: 2px solid var(--accent); pointer-events: none; 
-            color: white; font-weight: bold; font-size: 10px; display: flex; 
-            align-items: center; justify-content: center; overflow: hidden;
-        }
-
-        button, input, select { 
-            padding: 8px 12px; border-radius: 6px; border: 1px solid #444; 
-            background: #2c2c2c; color: white; font-weight: bold; cursor: pointer;
-        }
-
-        button:hover { background: #3d3d3d; }
+        #selection-rect { position: absolute; border: 2px dashed var(--accent); background: rgba(39, 174, 96, 0.2); display: none; pointer-events: none; }
+        .marker { position: absolute; background: rgba(39, 174, 96, 0.5); border: 2px solid var(--accent); pointer-events: none; color: white; font-weight: bold; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+        button, input, select { padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #2c2c2c; color: white; font-weight: bold; cursor: pointer; }
         .btn-save { background: var(--accent); border: none; }
         .btn-undo { background: var(--error); border: none; }
-        .btn-clear { background: #555; border: none; }
-
-        .page-info { background: #000; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+        .page-info { background: #000; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: flex; gap: 10px; align-items: center; }
     </style>
 </head>
-<body>
+<body class="dark-mode">
 
     <div class="toolbar">
         <input type="file" id="upload" accept="application/pdf">
@@ -61,7 +36,6 @@
         </select>
 
         <button class="btn-undo" onclick="undo()">Deshacer</button>
-        <button class="btn-clear" onclick="clearFields()">Limpiar</button>
         <button class="btn-save" onclick="savePDF()">💾 GUARDAR PDF</button>
     </div>
 
@@ -85,7 +59,6 @@
     const container = document.getElementById('canvas-container');
     const selRect = document.getElementById('selection-rect');
 
-    // 1. Cargar Archivo
     document.getElementById('upload').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -114,7 +87,6 @@
         if (n > 0 && n <= pdfDoc.numPages) { curP = n; drawPage(curP); }
     }
 
-    // 2. Dibujar con Mouse
     canvas.addEventListener('mousedown', (e) => {
         if (!rawData) return;
         dragging = true;
@@ -139,7 +111,7 @@
         const eX = e.clientX - r.left, eY = e.clientY - r.top;
         const w = Math.abs(eX - sX), h = Math.abs(eY - sY);
 
-        if (w > 10 && h > 10) {
+        if (w > 5 && h > 5) {
             fields.push({
                 x: Math.min(sX, eX), y: Math.min(sY, eY), w, h,
                 p: curP, t: document.getElementById('fieldType').value,
@@ -162,46 +134,42 @@
     }
 
     function undo() { fields.pop(); updateMarkers(); }
-    function clearFields() { if(confirm("¿Borrar todo?")) { fields = []; updateMarkers(); } }
 
-    // 3. Guardado Reforzado
     async function savePDF() {
-        if (!rawData) return alert("Sube un PDF primero");
+        if (!rawData) return alert("Sube un PDF");
         try {
-            // Cargamos pdf-lib con los bytes originales limpios
-            const doc = await PDFLib.PDFDocument.load(rawData);
+            // USAMOS IGNORE ENCRYPTION PARA EVITAR ERRORES EN FIREFOX
+            const doc = await PDFLib.PDFDocument.load(rawData, { ignoreEncryption: true });
             const form = doc.getForm();
             const pages = doc.getPages();
 
             fields.forEach((f, i) => {
                 const page = pages[f.p - 1];
                 const { width, height } = page.getSize();
-                
-                // Conversión matemática de coordenadas
                 const pX = (f.x * width) / f.cW;
                 const pY = height - ((f.y * height) / f.cH) - ((f.h * height) / f.cH);
                 const pW = (f.w * width) / f.cW;
                 const pH = (f.h * height) / f.cH;
 
-                const id = `f${i}_${Date.now()}`;
+                const name = `field_${f.p}_${i}_${Math.floor(Math.random()*1000)}`;
                 if (f.t === 'text') {
-                    const field = form.createTextField(id);
-                    field.addToPage(page, { x: pX, y: pY, width: pW, height: pH });
+                    form.createTextField(name).addToPage(page, { x: pX, y: pY, width: pW, height: pH });
                 } else {
-                    const check = form.createCheckBox(id);
-                    check.addToPage(page, { x: pX, y: pY, width: pW, height: pH });
+                    form.createCheckBox(name).addToPage(page, { x: pX, y: pY, width: pW, height: pH });
                 }
             });
 
             const bytes = await doc.save();
             const blob = new Blob([bytes], { type: "application/pdf" });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = "PDF_Rellenable.pdf";
-            link.click();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "editado_firefox.pdf";
+            a.click();
+            URL.revokeObjectURL(url);
         } catch (err) {
             console.error(err);
-            alert("Error crítico. Intenta abrir y guardar el PDF original con Chrome antes de subirlo aquí.");
+            alert("Error: Prueba a descargar el PDF de nuevo o usar uno que no tenga firmas digitales.");
         }
     }
 </script>
