@@ -2,21 +2,21 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>PDF Maker Pro - Multipágina</title>
+    <title>PDF Maker Pro - Versión Estable</title>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <style>
         :root { --bg: #121212; --card: #1e1e1e; --accent: #27ae60; --text: #e0e0e0; --error: #e74c3c; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; }
         
         .toolbar { 
-            background: var(--card); padding: 15px 25px; border-radius: 12px; 
-            display: flex; gap: 10px; align-items: center; margin-bottom: 25px;
+            background: var(--card); padding: 10px 20px; border-radius: 12px; 
+            display: flex; gap: 8px; align-items: center; margin-bottom: 15px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333;
-            position: sticky; top: 10px; z-index: 1000; flex-wrap: wrap; justify-content: center;
+            position: sticky; top: 10px; z-index: 1000; flex-wrap: wrap;
         }
 
-        #canvas-container { position: relative; border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.3); line-height: 0; overflow: hidden; }
+        #canvas-container { position: relative; border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.3); line-height: 0; background: #555; }
         #pdf-canvas { background: white; cursor: crosshair; }
         
         #selection-rect {
@@ -25,23 +25,23 @@
         }
 
         .marker { 
-            position: absolute; background: rgba(39, 174, 96, 0.4); 
+            position: absolute; background: rgba(39, 174, 96, 0.5); 
             border: 2px solid var(--accent); pointer-events: none; 
             color: white; font-weight: bold; font-size: 10px; display: flex; 
             align-items: center; justify-content: center; overflow: hidden;
         }
 
         button, input, select { 
-            padding: 10px 14px; border-radius: 8px; border: 1px solid #444; 
-            background: #2c2c2c; color: white; font-weight: 600; cursor: pointer;
+            padding: 8px 12px; border-radius: 6px; border: 1px solid #444; 
+            background: #2c2c2c; color: white; font-weight: bold; cursor: pointer;
         }
 
         button:hover { background: #3d3d3d; }
         .btn-save { background: var(--accent); border: none; }
-        .btn-clear { background: #555; border: none; }
         .btn-undo { background: var(--error); border: none; }
+        .btn-clear { background: #555; border: none; }
 
-        .page-ctrl { display: flex; align-items: center; gap: 10px; background: #2c2c2c; padding: 5px 15px; border-radius: 8px; border: 1px solid #444; }
+        .page-info { background: #000; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
     </style>
 </head>
 <body>
@@ -49,9 +49,9 @@
     <div class="toolbar">
         <input type="file" id="upload" accept="application/pdf">
         
-        <div class="page-ctrl">
+        <div class="page-info">
             <button onclick="changePage(-1)">◀</button>
-            <span>Pág: <span id="page-num">0</span> / <span id="page-count">0</span></span>
+            <span> <span id="p-num">0</span> / <span id="p-tot">0</span> </span>
             <button onclick="changePage(1)">▶</button>
         </div>
 
@@ -60,9 +60,9 @@
             <option value="check">Checkbox</option>
         </select>
 
-        <button class="btn-undo" onclick="undoLast()">Deshacer</button>
-        <button class="btn-clear" onclick="clearAll()">Limpiar Todo</button>
-        <button class="btn-save" onclick="generatePDF()">💾 Guardar PDF</button>
+        <button class="btn-undo" onclick="undo()">Deshacer</button>
+        <button class="btn-clear" onclick="clearFields()">Limpiar</button>
+        <button class="btn-save" onclick="savePDF()">💾 GUARDAR PDF</button>
     </div>
 
     <div id="canvas-container">
@@ -74,143 +74,135 @@
     const pdfjs = window['pdfjs-dist/build/pdf'];
     pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-    let pdfData = null;
-    let pdfDocInstance = null;
-    let currentPage = 1;
-    let fieldPoints = []; // Ahora guardará también el número de página
-    let isDragging = false;
-    let startX, startY;
+    let rawData = null;
+    let pdfDoc = null;
+    let curP = 1;
+    let fields = []; 
+    let dragging = false;
+    let sX, sY;
 
     const canvas = document.getElementById('pdf-canvas');
     const container = document.getElementById('canvas-container');
     const selRect = document.getElementById('selection-rect');
 
-    // 1. CARGAR PDF
+    // 1. Cargar Archivo
     document.getElementById('upload').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
-        const arrayBuffer = await file.arrayBuffer();
-        pdfData = new Uint8Array(arrayBuffer);
-        
-        pdfDocInstance = await pdfjs.getDocument({data: pdfData}).promise;
-        document.getElementById('page-count').innerText = pdfDocInstance.numPages;
-        
-        fieldPoints = [];
-        currentPage = 1;
-        renderPage(currentPage);
+        const buffer = await file.arrayBuffer();
+        rawData = new Uint8Array(buffer);
+        pdfDoc = await pdfjs.getDocument({data: rawData}).promise;
+        document.getElementById('p-tot').innerText = pdfDoc.numPages;
+        fields = [];
+        curP = 1;
+        drawPage(curP);
     });
 
-    async function renderPage(num) {
-        if (!pdfDocInstance) return;
-        document.getElementById('page-num').innerText = num;
-        
-        const page = await pdfDocInstance.getPage(num);
-        const viewport = page.getViewport({scale: 1.5});
-        
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        
-        await page.render({canvasContext: canvas.getContext('2d'), viewport: viewport}).promise;
-        renderMarkers();
+    async function drawPage(n) {
+        if (!pdfDoc) return;
+        document.getElementById('p-num').innerText = n;
+        const page = await pdfDoc.getPage(n);
+        const vp = page.getViewport({scale: 1.5});
+        canvas.height = vp.height; canvas.width = vp.width;
+        await page.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise;
+        updateMarkers();
     }
 
-    function changePage(delta) {
-        if (!pdfDocInstance) return;
-        const newPage = currentPage + delta;
-        if (newPage > 0 && newPage <= pdfDocInstance.numPages) {
-            currentPage = newPage;
-            renderPage(currentPage);
-        }
+    function changePage(d) {
+        if (!pdfDoc) return;
+        let n = curP + d;
+        if (n > 0 && n <= pdfDoc.numPages) { curP = n; drawPage(curP); }
     }
 
-    // 2. DIBUJO
+    // 2. Dibujar con Mouse
     canvas.addEventListener('mousedown', (e) => {
-        if (!pdfData) return;
-        isDragging = true;
-        const rect = canvas.getBoundingClientRect();
-        startX = e.clientX - rect.left;
-        startY = e.clientY - rect.top;
+        if (!rawData) return;
+        dragging = true;
+        const r = canvas.getBoundingClientRect();
+        sX = e.clientX - r.left; sY = e.clientY - r.top;
         selRect.style.display = 'block';
     });
 
     window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const rect = canvas.getBoundingClientRect();
-        const curX = e.clientX - rect.left;
-        const curY = e.clientY - rect.top;
-        const w = curX - startX;
-        const h = curY - startY;
-        selRect.style.width = Math.abs(w) + 'px';
-        selRect.style.height = Math.abs(h) + 'px';
-        selRect.style.left = (w > 0 ? startX : curX) + 'px';
-        selRect.style.top = (h > 0 ? startY : curY) + 'px';
+        if (!dragging) return;
+        const r = canvas.getBoundingClientRect();
+        const cX = e.clientX - r.left; const cY = e.clientY - r.top;
+        const w = cX - sX; const h = cY - sY;
+        selRect.style.width = Math.abs(w) + 'px'; selRect.style.height = Math.abs(h) + 'px';
+        selRect.style.left = (w > 0 ? sX : cX) + 'px'; selRect.style.top = (h > 0 ? sY : cY) + 'px';
     });
 
     window.addEventListener('mouseup', (e) => {
-        if (!isDragging) return;
-        isDragging = false;
-        selRect.style.display = 'none';
-        const rect = canvas.getBoundingClientRect();
-        const endX = e.clientX - rect.left, endY = e.clientY - rect.top;
-        const w = Math.abs(endX - startX), h = Math.abs(endY - startY);
+        if (!dragging) return;
+        dragging = false; selRect.style.display = 'none';
+        const r = canvas.getBoundingClientRect();
+        const eX = e.clientX - r.left, eY = e.clientY - r.top;
+        const w = Math.abs(eX - sX), h = Math.abs(eY - sY);
 
         if (w > 10 && h > 10) {
-            fieldPoints.push({
-                x: Math.min(startX, endX), y: Math.min(startY, endY),
-                w, h, page: currentPage, type: document.getElementById('fieldType').value,
+            fields.push({
+                x: Math.min(sX, eX), y: Math.min(sY, eY), w, h,
+                p: curP, t: document.getElementById('fieldType').value,
                 cW: canvas.width, cH: canvas.height
             });
-            renderMarkers();
+            updateMarkers();
         }
     });
 
-    function renderMarkers() {
+    function updateMarkers() {
         document.querySelectorAll('.marker').forEach(m => m.remove());
-        fieldPoints.filter(p => p.page === currentPage).forEach(p => {
-            const div = document.createElement('div');
-            div.className = 'marker';
-            div.style.left = p.x + 'px'; div.style.top = p.y + 'px';
-            div.style.width = p.w + 'px'; div.style.height = p.h + 'px';
-            div.innerText = p.type === 'text' ? 'TXT' : 'CHK';
-            container.appendChild(div);
+        fields.filter(f => f.p === curP).forEach(f => {
+            const m = document.createElement('div');
+            m.className = 'marker';
+            m.style.left = f.x + 'px'; m.style.top = f.y + 'px';
+            m.style.width = f.w + 'px'; m.style.height = f.h + 'px';
+            m.innerText = f.t === 'text' ? 'TXT' : 'V';
+            container.appendChild(m);
         });
     }
 
-    function undoLast() { fieldPoints.pop(); renderMarkers(); }
-    function clearAll() { if(confirm("¿Borrar todos los campos?")) { fieldPoints = []; renderMarkers(); } }
+    function undo() { fields.pop(); updateMarkers(); }
+    function clearFields() { if(confirm("¿Borrar todo?")) { fields = []; updateMarkers(); } }
 
-    // 3. GUARDAR
-    async function generatePDF() {
-        if (!pdfData) return alert("Sube un PDF primero");
+    // 3. Guardado Reforzado
+    async function savePDF() {
+        if (!rawData) return alert("Sube un PDF primero");
         try {
-            const pdfDoc = await PDFLib.PDFDocument.load(pdfData);
-            const form = pdfDoc.getForm();
-            const pages = pdfDoc.getPages();
+            // Cargamos pdf-lib con los bytes originales limpios
+            const doc = await PDFLib.PDFDocument.load(rawData);
+            const form = doc.getForm();
+            const pages = doc.getPages();
 
-            fieldPoints.forEach((p, i) => {
-                const targetPage = pages[p.page - 1];
-                const { width, height } = targetPage.getSize();
+            fields.forEach((f, i) => {
+                const page = pages[f.p - 1];
+                const { width, height } = page.getSize();
                 
-                const pdfX = (p.x * width) / p.cW;
-                const pdfY = height - ((p.y * height) / p.cH) - ((p.h * height) / p.cH);
-                const pdfW = (p.w * width) / p.cW;
-                const pdfH = (p.h * height) / p.cH;
+                // Conversión matemática de coordenadas
+                const pX = (f.x * width) / f.cW;
+                const pY = height - ((f.y * height) / f.cH) - ((f.h * height) / f.cH);
+                const pW = (f.w * width) / f.cW;
+                const pH = (f.h * height) / f.cH;
 
-                if (p.type === 'text') {
-                    form.createTextField(`f${i}_${Date.now()}`).addToPage(targetPage, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+                const id = `f${i}_${Date.now()}`;
+                if (f.t === 'text') {
+                    const field = form.createTextField(id);
+                    field.addToPage(page, { x: pX, y: pY, width: pW, height: pH });
                 } else {
-                    form.createCheckBox(`c${i}_${Date.now()}`).addToPage(targetPage, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+                    const check = form.createCheckBox(id);
+                    check.addToPage(page, { x: pX, y: pY, width: pW, height: pH });
                 }
             });
 
-            const pdfBytes = await pdfDoc.save();
-            const blob = new Blob([pdfBytes], { type: "application/pdf" });
+            const bytes = await doc.save();
+            const blob = new Blob([bytes], { type: "application/pdf" });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = "formulario_completo.pdf";
+            link.download = "PDF_Rellenable.pdf";
             link.click();
-        } catch (err) { alert("Error al procesar. Intenta con otro PDF."); }
+        } catch (err) {
+            console.error(err);
+            alert("Error crítico. Intenta abrir y guardar el PDF original con Chrome antes de subirlo aquí.");
+        }
     }
 </script>
 </body>
