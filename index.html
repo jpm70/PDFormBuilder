@@ -2,40 +2,39 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>PDF Maker Pro - Versión Ultra Estable</title>
+    <title>PDF Form Builder - Versión Blindada</title>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <style>
         :root { --bg: #121212; --card: #1e1e1e; --accent: #27ae60; --text: #e0e0e0; --error: #e74c3c; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; }
-        .toolbar { background: var(--card); padding: 10px 20px; border-radius: 12px; display: flex; gap: 8px; align-items: center; margin-bottom: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333; position: sticky; top: 10px; z-index: 1000; }
+        .toolbar { background: var(--card); padding: 10px 20px; border-radius: 12px; display: flex; gap: 10px; align-items: center; margin-bottom: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333; position: sticky; top: 10px; z-index: 1000; }
         #canvas-container { position: relative; border: 2px solid #444; background: #555; line-height: 0; }
         #pdf-canvas { background: white; cursor: crosshair; }
         #selection-rect { position: absolute; border: 2px dashed var(--accent); background: rgba(39, 174, 96, 0.2); display: none; pointer-events: none; }
-        .marker { position: absolute; background: rgba(39, 174, 96, 0.5); border: 2px solid var(--accent); pointer-events: none; color: white; font-weight: bold; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+        .marker { position: absolute; background: rgba(39, 174, 96, 0.5); border: 1px solid var(--accent); pointer-events: none; color: white; font-weight: bold; font-size: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         button, input, select { padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #2c2c2c; color: white; font-weight: bold; cursor: pointer; }
         .btn-save { background: var(--accent); border: none; }
         .btn-undo { background: var(--error); border: none; }
-        .page-ctrl { display: flex; align-items: center; gap: 10px; background: #000; padding: 5px 15px; border-radius: 8px; }
+        .btn-clear { background: #555; border: none; }
+        .page-ctrl { display: flex; align-items: center; gap: 8px; background: #000; padding: 5px 12px; border-radius: 8px; font-size: 13px; }
     </style>
 </head>
 <body>
 
     <div class="toolbar">
         <input type="file" id="upload" accept="application/pdf">
-        
         <div class="page-ctrl">
             <button onclick="changePage(-1)">◀</button>
-            <span> <span id="p-num">0</span> / <span id="p-tot">0</span> </span>
+            <span id="p-info">0 / 0</span>
             <button onclick="changePage(1)">▶</button>
         </div>
-
         <select id="fieldType">
             <option value="text">Texto</option>
             <option value="check">Checkbox</option>
         </select>
-
         <button class="btn-undo" onclick="undo()">Deshacer</button>
+        <button class="btn-clear" onclick="clearFields()">Limpiar</button>
         <button class="btn-save" onclick="savePDF()">💾 GUARDAR PDF</button>
     </div>
 
@@ -49,9 +48,9 @@
     pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
     let rawData = null;
-    let pdfDocInstance = null;
+    let pdfInstance = null;
     let curP = 1;
-    let fields = []; 
+    let fields = [];
     let dragging = false;
     let sX, sY;
 
@@ -59,24 +58,20 @@
     const container = document.getElementById('canvas-container');
     const selRect = document.getElementById('selection-rect');
 
-    // 1. Cargar archivo
     document.getElementById('upload').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const buffer = await file.arrayBuffer();
-        rawData = new Uint8Array(buffer);
-        
-        pdfDocInstance = await pdfjs.getDocument({data: rawData}).promise;
-        document.getElementById('p-tot').innerText = pdfDocInstance.numPages;
+        rawData = new Uint8Array(await file.arrayBuffer());
+        pdfInstance = await pdfjs.getDocument({data: rawData}).promise;
+        document.getElementById('p-info').innerText = `1 / ${pdfInstance.numPages}`;
         fields = [];
         curP = 1;
-        drawPage(curP);
+        drawPage(1);
     });
 
     async function drawPage(n) {
-        if (!pdfDocInstance) return;
-        document.getElementById('p-num').innerText = n;
-        const page = await pdfDocInstance.getPage(n);
+        if (!pdfInstance) return;
+        const page = await pdfInstance.getPage(n);
         const vp = page.getViewport({scale: 1.5});
         canvas.height = vp.height; canvas.width = vp.width;
         await page.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise;
@@ -84,12 +79,15 @@
     }
 
     function changePage(d) {
-        if (!pdfDocInstance) return;
+        if (!pdfInstance) return;
         let n = curP + d;
-        if (n > 0 && n <= pdfDocInstance.numPages) { curP = n; drawPage(curP); }
+        if (n > 0 && n <= pdfInstance.numPages) {
+            curP = n;
+            document.getElementById('p-info').innerText = `${curP} / ${pdfInstance.numPages}`;
+            drawPage(curP);
+        }
     }
 
-    // 2. Dibujo
     canvas.addEventListener('mousedown', (e) => {
         if (!rawData) return;
         dragging = true;
@@ -102,7 +100,7 @@
         if (!dragging) return;
         const r = canvas.getBoundingClientRect();
         const cX = e.clientX - r.left; const cY = e.clientY - r.top;
-        const w = cX - sX; const h = cY - sY;
+        const w = cX - sX, h = cY - sY;
         selRect.style.width = Math.abs(w) + 'px'; selRect.style.height = Math.abs(h) + 'px';
         selRect.style.left = (w > 0 ? sX : cX) + 'px'; selRect.style.top = (h > 0 ? sY : cY) + 'px';
     });
@@ -111,13 +109,11 @@
         if (!dragging) return;
         dragging = false; selRect.style.display = 'none';
         const r = canvas.getBoundingClientRect();
-        const eX = e.clientX - r.left, eY = e.clientY - r.top;
-        const w = Math.abs(eX - sX), h = Math.abs(eY - sY);
-
+        const w = Math.abs((e.clientX - r.left) - sX), h = Math.abs((e.clientY - r.top) - sY);
         if (w > 5 && h > 5) {
             fields.push({
-                x: Math.min(sX, eX), y: Math.min(sY, eY), w, h,
-                p: curP, t: document.getElementById('fieldType').value,
+                x: Math.min(sX, (e.clientX - r.left)), y: Math.min(sY, (e.clientY - r.top)),
+                w, h, p: curP, t: document.getElementById('fieldType').value,
                 cW: canvas.width, cH: canvas.height
             });
             updateMarkers();
@@ -131,60 +127,61 @@
             m.className = 'marker';
             m.style.left = f.x + 'px'; m.style.top = f.y + 'px';
             m.style.width = f.w + 'px'; m.style.height = f.h + 'px';
-            m.innerText = f.t === 'text' ? 'TXT' : 'V';
+            m.innerText = f.t === 'text' ? 'TXT' : 'CHK';
             container.appendChild(m);
         });
     }
 
     function undo() { fields.pop(); updateMarkers(); }
+    function clearFields() { if(confirm("¿Limpiar todo?")) { fields = []; updateMarkers(); } }
 
-    // 3. GUARDADO (MOTOR DE CLONACIÓN)
     async function savePDF() {
-        if (!rawData) return alert("Sube un PDF primero");
+        if (!rawData) return alert("Sube un PDF");
         try {
             const { PDFDocument } = PDFLib;
+            const finalDoc = await PDFDocument.create();
             
-            // Cargamos el PDF original
-            const srcDoc = await PDFDocument.load(rawData, { ignoreEncryption: true });
-            
-            // CREAMOS UN PDF NUEVO DESDE CERO (Para limpiar protecciones)
-            const outDoc = await PDFDocument.create();
-            
-            // Copiamos todas las páginas al nuevo documento
-            const pagesToCopy = Array.from({ length: srcDoc.getPageCount() }, (_, i) => i);
-            const copiedPages = await outDoc.copyPages(srcDoc, pagesToCopy);
-            copiedPages.forEach((page) => outDoc.addPage(page));
+            // Reconstruimos el PDF página a página como imágenes para evitar errores de protección
+            for (let i = 1; i <= pdfInstance.numPages; i++) {
+                const page = await pdfInstance.getPage(i);
+                const viewport = page.getViewport({ scale: 2.0 }); // Alta calidad
+                const tempCanvas = document.createElement('canvas');
+                const context = tempCanvas.getContext('2d');
+                tempCanvas.height = viewport.height;
+                tempCanvas.width = viewport.width;
+                
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+                const imgData = tempCanvas.toDataURL('image/png');
+                const image = await finalDoc.embedPng(imgData);
+                
+                const newPage = finalDoc.addPage([viewport.width, viewport.height]);
+                newPage.drawImage(image, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                
+                // Añadir campos en esta página
+                const form = finalDoc.getForm();
+                fields.filter(f => f.p === i).forEach((f, idx) => {
+                    const pX = (f.x * viewport.width) / f.cW;
+                    const pY = viewport.height - ((f.y * viewport.height) / f.cH) - ((f.h * viewport.height) / f.cH);
+                    const pW = (f.w * viewport.width) / f.cW;
+                    const pH = (f.h * viewport.height) / f.cH;
+                    
+                    const id = `f_${i}_${idx}_${Date.now()}`;
+                    if (f.t === 'text') {
+                        form.createTextField(id).addToPage(newPage, { x: pX, y: pY, width: pW, height: pH });
+                    } else {
+                        form.createCheckBox(id).addToPage(newPage, { x: pX, y: pY, width: pW, height: pH });
+                    }
+                });
+            }
 
-            const form = outDoc.getForm();
-            const outPages = outDoc.getPages();
-
-            fields.forEach((f, i) => {
-                const page = outPages[f.p - 1];
-                const { width, height } = page.getSize();
-                const pX = (f.x * width) / f.cW;
-                const pY = height - ((f.y * height) / f.cH) - ((f.h * height) / f.cH);
-                const pW = (f.w * width) / f.cW;
-                const pH = (f.h * height) / f.cH;
-
-                const name = `f_${f.p}_${i}_${Math.floor(Math.random()*1000)}`;
-                if (f.t === 'text') {
-                    form.createTextField(name).addToPage(page, { x: pX, y: pY, width: pW, height: pH });
-                } else {
-                    form.createCheckBox(name).addToPage(page, { x: pX, y: pY, width: pW, height: pH });
-                }
-            });
-
-            const bytes = await outDoc.save();
-            const blob = new Blob([bytes], { type: "application/pdf" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = "pdf_rellenable_limpio.pdf";
-            a.click();
-            URL.revokeObjectURL(url);
+            const bytes = await finalDoc.save();
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+            link.download = "PDF_Final_Rellenable.pdf";
+            link.click();
         } catch (err) {
             console.error(err);
-            alert("Error al guardar. Si el PDF tiene firmas digitales, no se puede editar por seguridad.");
+            alert("Error al generar. Intenta con un archivo más pequeño.");
         }
     }
 </script>
